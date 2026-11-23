@@ -1,0 +1,66 @@
+# Baixa os dados abertos do SISAGUA (Goiás), limpa e publica no GitHub Pages.
+name: Atualizar dados
+
+on:
+  schedule:
+    - cron: '17 7 * * 0' # domingo, 04:17 em Brasília
+  workflow_dispatch:
+    inputs:
+      anos:
+        description: 'Anos a refazer, separados por vírgula (vazio: atual e anterior)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atualizar-dados
+  cancel-in-progress: false
+
+jobs:
+  baixar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      pages: read
+      actions: write # só para manter o agendamento ligado
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Testes do robô
+        run: node --test robo/sisagua-publicador/teste.js
+      - name: Baixar, limpar e gravar
+        env:
+          SAIDA: site/dados
+          SITE_ANTERIOR: ${{ steps.pages.outputs.base_url }}/dados/
+          ANOS: ${{ inputs.anos }}
+        run: node robo/sisagua-publicador/atualizar.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      # o GitHub suspende agendamentos de repositório parado há 60 dias; isto mantém o daqui ligado
+      - name: Manter o agendamento
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/atualizar.yml/enable"
+
+  publicar:
+    needs: baixar
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
